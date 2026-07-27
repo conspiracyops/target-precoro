@@ -264,6 +264,7 @@ class PrecoroSink(HotglueSink):
         """Handle fetching and mapping externalId via Account Setup microservice."""
         account_setup_ref_id = None
         all_legal_entity_ids = []
+        precoro_id = None
 
         self.logger.info(f"Triggering AccountSetup search for externalId: {external_id}")
         try:
@@ -272,24 +273,42 @@ class PrecoroSink(HotglueSink):
             if search_resp and search_resp.get("isSuccess"):
                 account_setup_ref_id = self._get_account_setup_id(search_resp)
                 precoro_id = search_resp.get("precoroId")
-
-                if precoro_id:
-                    record["id"] = str(precoro_id)
-                    self.logger.info(f"Found precoroId {precoro_id}. Setting record method to PUT.")
-
-                    try:
-                        fetch_resp = self.fetch_account_setup_records(account_setup_ref_id)
-                        if fetch_resp and fetch_resp.get("isSuccess"):
-                            records = fetch_resp.get("records", [])
-                            all_legal_entity_ids = list(
-                                {r.get("legalEntityId") for r in records if r.get("legalEntityId") is not None}
-                            )
-                            self.logger.info(f"Fetched Legal Entities for update: {all_legal_entity_ids}")
-                    except Exception as exc:
-                        self.logger.error(f"AccountSetup GET failed: {exc}")
-
         except Exception as exc:
             self.logger.error(f"AccountSetup Search failed: {exc}")
+
+        if self._is_custom_field_option_stream():
+            # The AccountSetup microservice matches primarily on (legalEntityId, integrationId) --
+            # a per-BC-company GUID -- so it can't see that the same code+name option was already
+            # synced from a *different* legal entity, and mints a duplicate entity_id instead of
+            # reusing the existing one. Precoro's own option catalog has no such per-LE scoping,
+            # so treat it as the ground truth: if an option with this code+name already exists
+            # there, always reuse it instead of trusting a mismatched/missing microservice result.
+            existing_id = self._find_existing_option_by_code_name(record)
+            if existing_id and str(existing_id) != str(precoro_id or ""):
+                if precoro_id:
+                    self.logger.warning(
+                        f"AccountSetup search resolved externalId {external_id} to precoroId "
+                        f"{precoro_id}, but an option with the same code/name already exists in "
+                        f"Precoro as id {existing_id}. Reusing {existing_id} instead of creating "
+                        f"a duplicate option."
+                    )
+                precoro_id = existing_id
+
+        if precoro_id:
+            record["id"] = str(precoro_id)
+            self.logger.info(f"Found precoroId {precoro_id}. Setting record method to PUT.")
+
+            if account_setup_ref_id:
+                try:
+                    fetch_resp = self.fetch_account_setup_records(account_setup_ref_id)
+                    if fetch_resp and fetch_resp.get("isSuccess"):
+                        records = fetch_resp.get("records", [])
+                        all_legal_entity_ids = list(
+                            {r.get("legalEntityId") for r in records if r.get("legalEntityId") is not None}
+                        )
+                        self.logger.info(f"Fetched Legal Entities for update: {all_legal_entity_ids}")
+                except Exception as exc:
+                    self.logger.error(f"AccountSetup GET failed: {exc}")
 
         return account_setup_ref_id, all_legal_entity_ids
 
@@ -358,6 +377,64 @@ class PrecoroSink(HotglueSink):
                 f"at {base_endpoint}: {exc}"
             )
         return None
+
+    @staticmethod
+    def _option_catalog_key(code, name) -> tuple | None:
+        if not code or not name:
+            return None
+        return (str(code).strip().lower(), str(name).strip().lower())
+
+    def _get_option_list_endpoint(self, record: dict) -> str | None:
+        custom_field_id = record.get("custom_field_id")
+        if custom_field_id is None:
+            return None
+        custom_field_id = str(int(custom_field_id)) if isinstance(custom_field_id, float) else str(custom_field_id)
+        return self.endpoint.replace("custom_field_id", custom_field_id)
+
+    def _get_option_catalog_cache(self, base_endpoint: str) -> dict:
+        """Cache of existing Precoro options for a custom-field endpoint, keyed by
+        (code, name) -> id. Fetched once per job and updated as options are created during
+        this run (see remember_created_option), so it catches duplicates within a single
+        job as well as across jobs -- unlike the AccountSetup microservice, Precoro's own
+        catalog isn't scoped per legal entity, so it's an unambiguous source of truth for
+        whether a code+name option already exists.
+        """
+        target = getattr(self, "_target", None)
+        cache_store = getattr(target, "_option_catalog_cache", None) if target else None
+        if cache_store is None:
+            cache_store = {}
+            if target is not None:
+                setattr(target, "_option_catalog_cache", cache_store)
+
+        if base_endpoint not in cache_store:
+            options_by_key = {}
+            try:
+                response = self.request_api("GET", endpoint=base_endpoint)
+                for option in response.json().get("data", []):
+                    key = self._option_catalog_key(option.get("code"), option.get("name"))
+                    option_id = option.get("id")
+                    if key and option_id is not None:
+                        options_by_key[key] = str(option_id)
+            except Exception as exc:
+                self.logger.warning(f"Failed to list existing options at {base_endpoint}: {exc}")
+            cache_store[base_endpoint] = options_by_key
+
+        return cache_store[base_endpoint]
+
+    def _find_existing_option_by_code_name(self, record: dict) -> str | None:
+        base_endpoint = self._get_option_list_endpoint(record)
+        key = self._option_catalog_key(record.get("code"), record.get("name"))
+        if not base_endpoint or not key:
+            return None
+        return self._get_option_catalog_cache(base_endpoint).get(key)
+
+    def remember_created_option(self, base_endpoint: str, code, name, option_id) -> None:
+        """Record a just-created option in the code/name cache so later records in the same
+        job that share its code+name reuse it instead of creating a duplicate."""
+        key = self._option_catalog_key(code, name)
+        if not base_endpoint or not key or option_id is None:
+            return
+        self._get_option_catalog_cache(base_endpoint)[key] = str(option_id)
 
     def prepare_custom_field_account_setup_context(
         self,

@@ -81,6 +81,9 @@ class ItemCustomFieldsSink(PrecoroSink):
             response = self.request_api(method, endpoint=endpoint, request_data=record)
             id = response.json()["id"]
 
+            if method == "POST":
+                self.remember_created_option(base_endpoint, record.get("code"), record.get("name"), id)
+
             # update id mapping
             if custom_field_id not in self.id_mapping:
                 self.id_mapping[custom_field_id] = {}
@@ -176,7 +179,10 @@ class FallbackSink(PrecoroSink):
                 id = response.json()["id"]
                 idn = response.json().get("idn")
             pk = idn if self.name in ["invoices", "purchaseorders", "payments"] else id
-            
+
+            if self.name == "documentcustomfields" and method == "POST":
+                self.remember_created_option(base_endpoint, record.get("code"), record.get("name"), id)
+
             try:
                 self.finalize_account_setup(account_setup_context, pk, record)
             except Exception as e:
