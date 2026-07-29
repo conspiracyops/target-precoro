@@ -78,6 +78,11 @@ class ItemCustomFieldsSink(PrecoroSink):
                 id = int(id)
                 method = "PUT"
                 endpoint = f"{base_endpoint}/{id}"
+            # Precoro's option PUT treats a missing "enable" as "disable" rather than
+            # "leave unchanged" (confirmed: PUT without it flips an active option to
+            # enable=false) — always assert it explicitly so updating an option (e.g.
+            # to attach a new legal entity) doesn't silently deactivate it.
+            record["enable"] = True
             response = self.request_api(method, endpoint=endpoint, request_data=record)
             id = response.json()["id"]
 
@@ -167,6 +172,12 @@ class FallbackSink(PrecoroSink):
                 id = int(id)
                 method = "PUT"
                 endpoint = f"{base_endpoint}/{id}"
+            if self.name == "documentcustomfields":
+                # Precoro's option PUT treats a missing "enable" as "disable" rather
+                # than "leave unchanged" (confirmed: PUT without it flips an active
+                # option to enable=false) — always assert it explicitly so updating an
+                # option (e.g. to attach a new legal entity) doesn't deactivate it.
+                record["enable"] = True
             response = self.request_api(method, endpoint=endpoint, request_data=record)
             # if invoice is fully paid return a dummy id so the job doesn't fail
             if self.is_invoice_paid:
