@@ -42,7 +42,7 @@ class PrecoroSink(HotglueSink):
     def _get_account_setup_map_field(self, record: dict) -> str:
         """Return the AccountSetup mapField value based on the current stream."""
         stream_map_fields = {
-            "suppliers": "currency",
+            "suppliers": "currencies[]",
             "documentcustomfields": "code",
             "itemcustomfields": "code",
         }
