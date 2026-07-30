@@ -78,8 +78,16 @@ class ItemCustomFieldsSink(PrecoroSink):
                 id = int(id)
                 method = "PUT"
                 endpoint = f"{base_endpoint}/{id}"
+            # Precoro's option PUT treats a missing "enable" as "disable" rather than
+            # "leave unchanged" (confirmed: PUT without it flips an active option to
+            # enable=false) — always assert it explicitly so updating an option (e.g.
+            # to attach a new legal entity) doesn't silently deactivate it.
+            record["enable"] = True
             response = self.request_api(method, endpoint=endpoint, request_data=record)
             id = response.json()["id"]
+
+            if method == "POST":
+                self.remember_created_option(base_endpoint, record.get("code"), record.get("name"), id)
 
             # update id mapping
             if custom_field_id not in self.id_mapping:
@@ -177,6 +185,12 @@ class FallbackSink(PrecoroSink):
                 endpoint = f"{base_endpoint}/{id}"
                 if self.name == "suppliers":
                     self.merge_supplier_currencies(record, id)
+            if self.name == "documentcustomfields":
+                # Precoro's option PUT treats a missing "enable" as "disable" rather
+                # than "leave unchanged" (confirmed: PUT without it flips an active
+                # option to enable=false) — always assert it explicitly so updating an
+                # option (e.g. to attach a new legal entity) doesn't deactivate it.
+                record["enable"] = True
             response = self.request_api(method, endpoint=endpoint, request_data=record)
             # if invoice is fully paid return a dummy id so the job doesn't fail
             if self.is_invoice_paid:
@@ -186,7 +200,10 @@ class FallbackSink(PrecoroSink):
                 id = response.json()["id"]
                 idn = response.json().get("idn")
             pk = idn if self.name in ["invoices", "purchaseorders", "payments"] else id
-            
+
+            if self.name == "documentcustomfields" and method == "POST":
+                self.remember_created_option(base_endpoint, record.get("code"), record.get("name"), id)
+
             try:
                 self.finalize_account_setup(account_setup_context, pk, record)
             except Exception as e:
