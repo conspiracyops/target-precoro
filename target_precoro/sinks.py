@@ -111,16 +111,23 @@ class FallbackSink(PrecoroSink):
 
     def check_and_fix_payment_amount(self, record: dict):
         """
-            HGI-8258: fix payment amount if it's within 0.01 of the remaining amount
+            HGI-8258: fix payment amount if it's within a rounding tolerance of the remaining
+            amount. Sources like Dynamics BC compute VAT once on the invoice total, while
+            Precoro rounds VAT per line, so multi-line invoices can land a few cents apart
+            even though both totals are correct for their own rounding method. A flat 0.01
+            only covers a single rounded line, so the tolerance scales with the invoice sum
+            (a proxy for how many taxed lines/roundings it has).
         """
         response = self.request_api("GET", endpoint=f"/invoices?id={record.get('invoice[id]')}")
         invoices = response.json().get("data", [])
         if len(invoices) == 0:
             raise Exception(f"Invoice {record.get('invoice[id]')} not found")
-        
+
         invoice = invoices[0]
-        remaining_amount = invoice.get("sum", 0) - float(invoice.get("sumPaid", 0))
-        if abs(round((remaining_amount - record.get("sumPaid")), 2)) <= 0.01:
+        invoice_sum = invoice.get("sum", 0) or 0
+        remaining_amount = invoice_sum - float(invoice.get("sumPaid", 0))
+        tolerance = min(max(0.01, invoice_sum * 0.0005), 1.0)
+        if abs(round((remaining_amount - record.get("sumPaid")), 2)) <= tolerance:
             record["sumPaid"] = round(remaining_amount, 2)
 
     def upsert_record(self, record: dict, context: dict):
