@@ -1,5 +1,7 @@
 """Precoro target sink class, which handles writing streams."""
 
+import math
+
 from target_precoro.client import PrecoroSink
 
 
@@ -135,8 +137,9 @@ class FallbackSink(PrecoroSink):
             total, while Precoro rounds VAT per line, so multi-line invoices can land a
             few cents apart even though both totals are correct for their own rounding
             method. Each taxed line can round independently by at most 0.005, so the
-            tolerance is 0.005 x number of taxed lines (floor 0.01, since amounts only
-            ever compare at cent precision) - tied to the actual rounding mechanism
+            tolerance is 0.005 x number of taxed lines, rounded up to the nearest cent
+            (floor 0.01), since amounts only ever compare at cent precision - tied to
+            the actual rounding mechanism
             instead of a proxy like the invoice sum, which doesn't correlate with line
             count (a single $50k line vs. 300 $3 lines can have the same sum but very
             different max drift).
@@ -157,7 +160,7 @@ class FallbackSink(PrecoroSink):
             return
 
         taxed_lines = self._get_taxed_line_count(invoice.get("idn"))
-        tolerance = max(0.01, 0.005 * taxed_lines)
+        tolerance = max(0.01, math.ceil(0.005 * taxed_lines * 100) / 100)
         if diff <= tolerance:
             record["sumPaid"] = round(remaining_amount, 2)
 
