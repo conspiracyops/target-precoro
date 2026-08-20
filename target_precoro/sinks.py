@@ -117,18 +117,48 @@ class FallbackSink(PrecoroSink):
     def name(self):
         return self.stream_name
 
+    def _get_taxed_line_count(self, idn) -> int:
+        """Number of invoice lines that carry a tax - the source of the rounding drift
+        check_and_fix_payment_amount tolerates (see there). Falls back to 1 (the
+        single-line tolerance) if the idn is missing or the line detail can't be read."""
+        if not idn:
+            return 1
+        response = self.request_api("GET", endpoint=f"/invoices/{idn}")
+        items = response.json().get("items", {}).get("data", [])
+        taxed_lines = sum(1 for item in items if item.get("taxes", {}).get("data"))
+        return taxed_lines or 1
+
     def check_and_fix_payment_amount(self, record: dict):
         """
-            HGI-8258: fix payment amount if it's within 0.01 of the remaining amount
+            HGI-8258: fix payment amount if it's within a rounding tolerance of the
+            remaining amount. Sources like Dynamics BC compute VAT once on the invoice
+            total, while Precoro rounds VAT per line, so multi-line invoices can land a
+            few cents apart even though both totals are correct for their own rounding
+            method. Each taxed line can round independently by at most 0.005, so the
+            tolerance is 0.005 x number of taxed lines (floor 0.01, since amounts only
+            ever compare at cent precision) - tied to the actual rounding mechanism
+            instead of a proxy like the invoice sum, which doesn't correlate with line
+            count (a single $50k line vs. 300 $3 lines can have the same sum but very
+            different max drift).
         """
         response = self.request_api("GET", endpoint=f"/invoices?id={record.get('invoice[id]')}")
         invoices = response.json().get("data", [])
         if len(invoices) == 0:
             raise Exception(f"Invoice {record.get('invoice[id]')} not found")
-        
+
         invoice = invoices[0]
         remaining_amount = invoice.get("sum", 0) - float(invoice.get("sumPaid", 0))
-        if abs(round((remaining_amount - record.get("sumPaid")), 2)) <= 0.01:
+        diff = abs(round((remaining_amount - record.get("sumPaid")), 2))
+
+        # Cheap path first: most payments match exactly or within a single line's
+        # rounding, so only pay for the extra line-detail request when they don't.
+        if diff <= 0.01:
+            record["sumPaid"] = round(remaining_amount, 2)
+            return
+
+        taxed_lines = self._get_taxed_line_count(invoice.get("idn"))
+        tolerance = max(0.01, 0.005 * taxed_lines)
+        if diff <= tolerance:
             record["sumPaid"] = round(remaining_amount, 2)
 
     def upsert_record(self, record: dict, context: dict):
