@@ -283,7 +283,11 @@ class PrecoroSink(HotglueSink):
             # reusing the existing one. Precoro's own option catalog has no such per-LE scoping,
             # so treat it as the ground truth: if an option with this code+name already exists
             # there, always reuse it instead of trusting a mismatched/missing microservice result.
-            existing_id = self._find_existing_option_by_code_name(record)
+            try:
+                existing_id = self._find_existing_option_by_code_name(record)
+            except Exception as exc:
+                self.logger.error(f"Option catalog dedup check failed: {exc}")
+                existing_id = None
             if existing_id and str(existing_id) != str(precoro_id or ""):
                 if precoro_id:
                     self.logger.warning(
@@ -444,7 +448,7 @@ class PrecoroSink(HotglueSink):
                     if key and option_id is not None:
                         options_by_key[key] = str(option_id)
             except Exception as exc:
-                self.logger.warning(f"Failed to list existing options at {base_endpoint}: {exc}")
+                raise Exception(f"Failed to list existing options at {base_endpoint}: {exc}") from exc
             cache_store[base_endpoint] = options_by_key
 
         return cache_store[base_endpoint]
