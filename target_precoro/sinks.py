@@ -222,8 +222,8 @@ class FallbackSink(PrecoroSink):
                 # Precoro's option PUT treats a missing "enable" as "disable" rather
                 # than "leave unchanged" (confirmed: PUT without it flips an active
                 # option to enable=false) — default it only when the source didn't
-                # send one, so integrations that explicitly toggle enable (e.g.
-                # Artera) aren't forced back to enabled.
+                # send one, so integrations that explicitly toggle enable
+                # aren't forced back to enabled.
                 record["enable"] = True
             response = self.request_api(method, endpoint=endpoint, request_data=record)
             # if invoice is fully paid return a dummy id so the job doesn't fail
