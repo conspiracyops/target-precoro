@@ -80,11 +80,12 @@ class ItemCustomFieldsSink(PrecoroSink):
                 id = int(id)
                 method = "PUT"
                 endpoint = f"{base_endpoint}/{id}"
-            # Precoro's option PUT treats a missing "enable" as "disable" rather than
-            # "leave unchanged" (confirmed: PUT without it flips an active option to
-            # enable=false) — always assert it explicitly so updating an option (e.g.
-            # to attach a new legal entity) doesn't silently deactivate it.
-            record["enable"] = True
+            if "enable" not in record:
+                # Precoro's option PUT treats a missing "enable" as "disable" rather than
+                # "leave unchanged" (confirmed: PUT without it flips an active option to
+                # enable=false) — default it only when the source didn't send one, so
+                # integrations that explicitly toggle enable aren't forced back to enabled.
+                record["enable"] = True
             response = self.request_api(method, endpoint=endpoint, request_data=record)
             id = response.json()["id"]
 
