@@ -396,17 +396,19 @@ class PrecoroSink(HotglueSink):
         if not base_endpoint or not external_id:
             return None
 
+        detail_endpoint = base_endpoint.rsplit("/options", 1)[0]
         try:
-            response = self.request_api("GET", endpoint=base_endpoint)
-            options = response.json().get("data", [])
-            for option in options:
+            response = self.request_api("GET", endpoint=detail_endpoint)
+            options = response.json().get("options", {}).get("data", [])
+            options_iter = options.values() if isinstance(options, dict) else options
+            for option in options_iter:
                 if str(option.get("externalId")) == str(external_id):
                     option_id = option.get("id")
                     return str(option_id) if option_id is not None else None
         except Exception as exc:
             self.logger.warning(
                 f"Failed to lookup existing custom field option for externalId {external_id} "
-                f"at {base_endpoint}: {exc}"
+                f"at {detail_endpoint}: {exc}"
             )
         return None
 
