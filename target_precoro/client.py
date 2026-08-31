@@ -442,18 +442,15 @@ class PrecoroSink(HotglueSink):
 
         if base_endpoint not in cache_store:
             options_by_key = {}
-            detail_endpoint = base_endpoint.rsplit("/options", 1)[0]
             try:
-                response = self.request_api("GET", endpoint=detail_endpoint)
-                options = response.json().get("options", {}).get("data", [])
-                options_iter = options.values() if isinstance(options, dict) else options
-                for option in options_iter:
+                response = self.request_api("GET", endpoint=base_endpoint)
+                for option in response.json().get("data", []):
                     key = self._option_catalog_key(option.get("code"), option.get("name"))
                     option_id = option.get("id")
                     if key and option_id is not None:
                         options_by_key[key] = str(option_id)
             except Exception as exc:
-                raise Exception(f"Failed to list existing options at {detail_endpoint}: {exc}") from exc
+                raise Exception(f"Failed to list existing options at {base_endpoint}: {exc}") from exc
             cache_store[base_endpoint] = options_by_key
 
         return cache_store[base_endpoint]
@@ -471,10 +468,7 @@ class PrecoroSink(HotglueSink):
         key = self._option_catalog_key(code, name)
         if not base_endpoint or not key or option_id is None:
             return
-        try:
-            self._get_option_catalog_cache(base_endpoint)[key] = str(option_id)
-        except Exception as exc:
-            self.logger.warning(f"Failed to update option catalog cache at {base_endpoint}: {exc}")
+        self._get_option_catalog_cache(base_endpoint)[key] = str(option_id)
 
     def prepare_custom_field_account_setup_context(
         self,
