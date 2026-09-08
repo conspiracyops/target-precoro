@@ -320,12 +320,14 @@ class PrecoroSink(HotglueSink):
         """Centralize AccountSetup preprocessing for record upserts."""
         external_id = record.pop("externalId", None)
         legal_entity_id = record.pop("legalEntityId", None)
+        is_parent_category = bool(record.pop("isParentCategory", False))
         account_setup_enabled = self.is_account_setup_enabled(external_id, legal_entity_id)
 
         context = {
             "source_external_id": external_id,
             "external_id": external_id,
             "legal_entity_id": legal_entity_id,
+            "is_parent_category": is_parent_category,
             "account_setup_enabled": account_setup_enabled,
             "account_setup_ref_id": None,
             "all_legal_entity_ids": [],
@@ -529,6 +531,10 @@ class PrecoroSink(HotglueSink):
     def apply_account_setup_dependencies(self, context: dict, precoro_id) -> None:
         """Apply extra Precoro dependency updates required by AccountSetup flows."""
         if not context.get("account_setup_enabled") or not self._is_custom_field_option_stream():
+            return
+
+        if context.get("is_parent_category"):
+            # Shared category option (e.g. GL account parent) -- skip Precoro-side depend_add, but AccountSetup registration above still runs.
             return
 
         legal_entity_ids = self._get_account_setup_legal_entity_ids(context)
