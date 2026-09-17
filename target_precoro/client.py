@@ -415,14 +415,9 @@ class PrecoroSink(HotglueSink):
         return legal_entity_ids
 
     def merge_supplier_legal_entities(self, record: dict, supplier_id) -> None:
-        """Merge the incoming legal entities into the supplier's existing legal entity list instead of replacing it.
-
-        The AccountSetup microservice only knows about legal entities that went through a
-        Precoro->BC export for this supplier -- one added directly in Precoro (e.g. by a user,
-        bypassing BC) is invisible to it. Sending its list as-is on update would make Precoro
-        replace the whole supplierLegalEntityIds[] list, silently dropping legal entities added
-        that way.
-        """
+        """Merge AccountSetup's legal entities into the existing list instead of replacing it --
+        a legal entity added directly in Precoro is invisible to AccountSetup and would get
+        silently dropped on overwrite."""
         incoming = record.get("supplierLegalEntityIds[]")
         if incoming is None:
             return
