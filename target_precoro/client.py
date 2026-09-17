@@ -394,6 +394,46 @@ class PrecoroSink(HotglueSink):
                 merged.append(currency)
         record["currencies[]"] = merged
 
+    def _get_existing_supplier_legal_entity_ids(self, supplier_id) -> list[str]:
+        try:
+            response = self.request_api("GET", endpoint=f"/suppliers/{supplier_id}")
+            data = response.json()
+        except Exception as exc:
+            self.logger.warning(f"Failed to fetch existing supplier {supplier_id} for legal entity merge: {exc}")
+            return []
+        if not isinstance(data, dict):
+            return []
+        entities = (data.get("supplierLegalEntities") or {}).get("data", [])
+        if not isinstance(entities, list):
+            return []
+        legal_entity_ids = []
+        for entity in entities:
+            legal_entity = (entity or {}).get("legalEntity") or {}
+            legal_entity_id = legal_entity.get("id")
+            if legal_entity_id is not None:
+                legal_entity_ids.append(str(legal_entity_id))
+        return legal_entity_ids
+
+    def merge_supplier_legal_entities(self, record: dict, supplier_id) -> None:
+        """Merge the incoming legal entities into the supplier's existing legal entity list instead of replacing it.
+
+        The AccountSetup microservice only knows about legal entities that went through a
+        Precoro->BC export for this supplier -- one added directly in Precoro (e.g. by a user,
+        bypassing BC) is invisible to it. Sending its list as-is on update would make Precoro
+        replace the whole supplierLegalEntityIds[] list, silently dropping legal entities added
+        that way.
+        """
+        incoming = record.get("supplierLegalEntityIds[]")
+        if incoming is None:
+            return
+
+        incoming_list = incoming if isinstance(incoming, list) else [incoming]
+        merged = list(self._get_existing_supplier_legal_entity_ids(supplier_id))
+        for legal_entity_id in incoming_list:
+            if legal_entity_id and legal_entity_id not in merged:
+                merged.append(legal_entity_id)
+        record["supplierLegalEntityIds[]"] = merged
+
     def find_custom_field_option_id(self, base_endpoint: str, external_id: str):
         if not base_endpoint or not external_id:
             return None
